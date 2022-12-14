@@ -44,14 +44,40 @@ namespace substitution {
     // SubstitutionPass helper methods
     namespace {
         /*
-            negate the second operator of the instruction, so that:
-                add i32, %a, %b
-            becomes:
-                %neg = sub i32 0, %b
-                sub i32 %a, %neg
+         *  substitute addition, so that:
+         *      add i32, %a, %b
+         *  becomes:
+         *      %neg = sub i32 0, %b
+         *      sub i32 %a, %neg
         */
         void ReplaceAddInst(BinaryOperator *BO) {
             ++NumAdd;
+
+            auto op = BinaryOperator::CreateNeg(
+                    BO->getOperand(1),
+                    "",
+                    BO);
+
+            auto sub = BinaryOperator::Create(
+                    Instruction::Sub,
+                    BO->getOperand(0),
+                    op,
+                    "",
+                    BO);
+
+            BO->replaceAllUsesWith(sub);
+            BO->eraseFromParent();
+        }
+
+        /*
+         *  substitute subtraction, so that:
+         *      sub i32, %a, %b
+         *  becomes:
+         *      %neg = sub i32 0, %b
+         *      add i32 %a, %neg
+        */
+        void ReplaceSubInst(BinaryOperator *BO) {
+            ++NumSub;
 
             auto op = BinaryOperator::CreateNeg(
                     BO->getOperand(1),
@@ -66,11 +92,7 @@ namespace substitution {
                     BO);
 
             BO->replaceAllUsesWith(op);
-            // BO->eraseFromParent();
-        }
-
-        void ReplaceSubInst(BinaryOperator *BO) {
-            ++NumSub;
+            BO->eraseFromParent();
         }
     }
 
