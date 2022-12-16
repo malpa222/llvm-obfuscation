@@ -1,4 +1,3 @@
-#include "llvm/ADT/Statistic.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
@@ -9,16 +8,10 @@
 
 #include "Substitution.h"
 
-#define DEBUG_TYPE "substitution"
-STATISTIC(NumAdd, "add substituted");
-STATISTIC(NumSub, "sub substituted");
-
 using namespace llvm;
 
 // SubstitutionAnalysis
 namespace substitution {
-    using InstOp = Instruction::BinaryOps;
-
     // Initialize the analysis ID
     AnalysisKey SubstitutionAnalysis::Key;
 
@@ -26,12 +19,16 @@ namespace substitution {
         SmallVector<BinaryOperator*, 0> Insts;
 
         for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; I++) {
+            // check if the instruction is a call to a function
+            if (auto *CB = dyn_cast<CallBase>(&*I))
+                 errs() << CB->getCalledFunction()->getName() << "\n";
+
             if (!I->isBinaryOp())
                 continue;
 
             // check if the instruction is either add or sub
-            auto opcode = I->getOpcode();
-            if (opcode == InstOp::Add || opcode == InstOp::Sub)
+            // auto opcode = I->getOpcode();
+            if (auto opcode = I->getOpcode(); opcode == Instruction::Add || opcode == Instruction::Sub)
                 Insts.push_back(cast<BinaryOperator>(&*I));
         }
 
@@ -44,15 +41,47 @@ namespace substitution {
     // SubstitutionPass helper methods
     namespace {
         /*
+         *
          *  substitute addition, so that:
          *      add i32, %a, %b
+         *
+         *      -> a + b
          *  becomes:
          *      %neg = sub i32 0, %b
          *      sub i32 %a, %neg
+         *
+         *      -> a - (-b)
         */
         void ReplaceAddInst(BinaryOperator *BO) {
-            ++NumAdd;
+            auto op = BinaryOperator::CreateNeg(
+                    BO->getOperand(1),
+                    "",
+                    BO);
 
+            auto sub = BinaryOperator::Create(
+                    Instruction::Sub,
+                    BO->getOperand(0),
+                    op,
+                    "",
+                    BO);
+
+            BO->replaceAllUsesWith(sub);
+            BO->eraseFromParent();
+        }
+
+        /*
+         *
+         *  substitute addition, so that:
+         *      add i32, %a, %b
+         *
+         *      -> a + b
+         *  becomes:
+         *      %neg = sub i32 0, %b
+         *      sub i32 %a, %neg
+         *
+         *      -> - (a - b)
+        */
+        void ReplaceSAddInst(BinaryOperator *BO) {
             auto op = BinaryOperator::CreateNeg(
                     BO->getOperand(1),
                     "",
@@ -77,8 +106,6 @@ namespace substitution {
          *      add i32 %a, %neg
         */
         void ReplaceSubInst(BinaryOperator *BO) {
-            ++NumSub;
-
             auto op = BinaryOperator::CreateNeg(
                     BO->getOperand(1),
                     "",
@@ -101,10 +128,10 @@ namespace substitution {
 
         for (auto BO: AddInsts) {
             switch (BO->getOpcode()) {
-                case InstOp::Add:
+                case Instruction::Add:
                     ReplaceAddInst(BO);
                     break;
-                case InstOp::Sub:
+                case Instruction::Sub:
                     ReplaceSubInst(BO);
                     break;
                 default:
