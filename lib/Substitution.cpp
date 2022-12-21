@@ -20,8 +20,15 @@ namespace substitution {
 
         for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; I++) {
             // check if the instruction is a call to a function
-            if (auto *CB = dyn_cast<CallBase>(&*I))
-                 errs() << CB->getCalledFunction()->getName() << "\n";
+            if (auto *CB = dyn_cast<CallBase>(&*I)) {
+                auto func = CB->getCalledFunction(); func->getIntrinsicID() != Intrinsic::not_intrinsic)
+
+                errs() << "=============================" << "\n";
+                errs() << "Name: " << func->getName() << "\n";
+                errs() << "Intrinsic ID: " << func->getIntrinsicID() << "\n";
+                errs() << "Type: " << func->getFunctionType() << "\n";
+                errs() << "=============================" << "\n";
+            }
 
             if (!I->isBinaryOp())
                 continue;
