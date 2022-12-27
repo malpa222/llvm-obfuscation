@@ -17,26 +17,26 @@ namespace substitution {
 
     SubstitutionAnalysis::Result SubstitutionAnalysis::run(Function &F, FunctionAnalysisManager &FAM) {
         SmallVector<BinaryOperator*, 0> Insts;
+        auto attrs = F.getAttributes();
+
+        errs() << "=============================" << "\n";
+        errs() << "F_Name: " << F.getName() << "\n";
 
         for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; I++) {
-            // check if the instruction is a call to a function
-            if (auto *CB = dyn_cast<CallBase>(&*I)) {
-                auto func = CB->getCalledFunction(); func->getIntrinsicID() != Intrinsic::not_intrinsic)
-
-                errs() << "=============================" << "\n";
-                errs() << "Name: " << func->getName() << "\n";
-                errs() << "Intrinsic ID: " << func->getIntrinsicID() << "\n";
-                errs() << "Type: " << func->getFunctionType() << "\n";
-                errs() << "=============================" << "\n";
-            }
-
             if (!I->isBinaryOp())
                 continue;
 
-            // check if the instruction is either add or sub
-            // auto opcode = I->getOpcode();
-            if (auto opcode = I->getOpcode(); opcode == Instruction::Add || opcode == Instruction::Sub)
-                Insts.push_back(cast<BinaryOperator>(&*I));
+            auto opcode = I->getOpcode();
+            switch (opcode) {
+                case Instruction::Add:
+                    errs() << "Type: " << "Add" << "\n";
+                    break;
+                case Instruction::Sub:
+                    errs() << "Type: " << "Sub" << "\n";
+                    break;
+            }
+
+            Insts.push_back(cast<BinaryOperator>(&*I));
         }
 
         return Insts;
@@ -77,35 +77,6 @@ namespace substitution {
         }
 
         /*
-         *
-         *  substitute addition, so that:
-         *      add i32, %a, %b
-         *
-         *      -> a + b
-         *  becomes:
-         *      %neg = sub i32 0, %b
-         *      sub i32 %a, %neg
-         *
-         *      -> - (a - b)
-        */
-        void ReplaceSAddInst(BinaryOperator *BO) {
-            auto op = BinaryOperator::CreateNeg(
-                    BO->getOperand(1),
-                    "",
-                    BO);
-
-            auto sub = BinaryOperator::Create(
-                    Instruction::Sub,
-                    BO->getOperand(0),
-                    op,
-                    "",
-                    BO);
-
-            BO->replaceAllUsesWith(sub);
-            BO->eraseFromParent();
-        }
-
-        /*
          *  substitute subtraction, so that:
          *      sub i32, %a, %b
          *  becomes:
@@ -119,7 +90,7 @@ namespace substitution {
                     BO);
 
             op = BinaryOperator::Create(
-                    Instruction::Sub,
+                    Instruction::Add,
                     BO->getOperand(0),
                     op,
                     "",

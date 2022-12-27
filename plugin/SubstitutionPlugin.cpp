@@ -28,5 +28,9 @@ extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
                             return false;
                         });
 
+                // register the pass to run at any level
+                PB.registerVectorizerStartEPCallback([](FunctionPassManager &FPM, OptimizationLevel OL) {
+                    FPM.addPass(substitution::SubstitutionPass());
+                });
             }};
 }
