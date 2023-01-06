@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
-project(obfuscation-lib)
 
 set(LLVM_PASSES
-        Substitution)
+        Substitution
+        Flattening)
 
 foreach(pass ${LLVM_PASSES})
+    message("Building ${pass}")
     add_library(${pass} MODULE
             ${pass}.cpp
             "${CMAKE_CURRENT_SOURCE_DIR}/../plugin/${pass}Plugin.cpp")
