@@ -1,16 +1,17 @@
-int add(int a, int b) {
-    return a + b;
-}
-
-int sub(int a, int b) {
-    return a - b;
-}
+#include "stdio.h"
+#include "stdlib.h"
 
 int main() {
-    int a = add(5, 10);
-    int b = sub(10, 5);
+    time_t t;
+    srand((unsigned) time(&t));
 
-    int c = a - b;
+    int n = rand();
+    printf("n = %d\n", n);
+
+    if (n < 10)
+        printf("n is smaller than 10\n");
+    else
+        printf("n is bigger than 10\n");
 
     return 0;
 }
