@@ -32,25 +32,26 @@ namespace flattening {
 
         BasicBlock *first = &*F.begin(); // Get a pointer to the first BB
 
-        BasicBlock *last = BasicBlock::Create(F.getContext(),"return",&F);
+        // Create return BB
+        BasicBlock *last = BasicBlock::Create(F.getContext(), "return", &F);
         ReturnInst::Create(F.getContext(), ConstantInt::get(Type::getInt32Ty(F.getContext()), 0), last);
 
         blocks.erase(blocks.begin()); // Remove first BB
         first->getTerminator()->eraseFromParent(); // remove jump
 
-        // Create switch variable
+        // Create dispatcher variable
         auto *dispatcher = new AllocaInst(Type::getInt32Ty(F.getContext()), 0, "dispatcher", first);
         new StoreInst(ConstantInt::get(Type::getInt32Ty(F.getContext()), 0), dispatcher, first);
 
         /*
-         * Create while loop that ends with:
+         * Create do...while loop with condition dispatcher < numBlocks:
          * %isBigger = icmp ult ptr %dispatcher, %numBlocks
          * br i1 %isBigger, label %loopStart, label %return
          */
         BasicBlock *loopStart = BasicBlock::Create(F.getContext(), "loopStart", &F, first);
         BasicBlock *loopEnd = BasicBlock::Create(F.getContext(), "loopEnd", &F, first);
         auto *numBlocks = new AllocaInst(Type::getInt32Ty(F.getContext()), 0, "numBlocks", first);
-        new StoreInst(ConstantInt::get(Type::getInt32Ty(F.getContext()), blocks.size() + 1), numBlocks, first);
+        new StoreInst(ConstantInt::get(Type::getInt32Ty(F.getContext()), blocks.size()), numBlocks, first);
         auto icmp = new ICmpInst(
                 *loopEnd,
                 CmpInst::Predicate::ICMP_ULT,
@@ -58,13 +59,6 @@ namespace flattening {
                 numBlocks,
                 "isBigger");
         BranchInst::Create(loopStart, last, icmp, loopEnd);
-
-        // load dispatcher to switchVar ??????
-        auto *switchVar = new LoadInst(
-                Type::getInt32Ty(F.getContext()),
-                dispatcher,
-                "switchVar",
-                loopStart);
 
         // Move first BB on top
         first->moveBefore(loopStart);
@@ -94,89 +88,101 @@ namespace flattening {
         BranchInst::Create(loopEnd, swDefault); // go to loopEnd
 
         // Create switch instruction itself and set condition
-        SwitchInst *switchI = SwitchInst::Create(&*F.begin(), swDefault, blocks.size(), loopStart);
-        switchI->setCondition(switchVar);
+        BasicBlock *switchBlock = BasicBlock::Create(F.getContext(), "switch", &F);
+        switchBlock->moveAfter(loopStart);
+        BranchInst::Create(switchBlock, loopStart);
+        auto *switchVar = new LoadInst(
+                Type::getInt32Ty(F.getContext()),
+                dispatcher,
+                "switchVar",
+                switchBlock);
+        SwitchInst *switchInst = SwitchInst::Create(&*F.begin(), swDefault, blocks.size(), switchBlock);
+        switchInst->setCondition(switchVar);
 
-        // Remove branch jump from 1st BB and make a jump to the while
-        F.begin()->getTerminator()->eraseFromParent();
-
-        BranchInst::Create(loopStart, &*F.begin());
-
+        // Create new basic block for each switch case
         for (BasicBlock *BB : blocks) {
             ConstantInt *numCase;
 
             // Move the BB inside the switch (only visual, no code logic)
-            BB->moveBefore(loopEnd);
+            BasicBlock caseBlock = BasicBlock::Create();
+            BB->moveBefore(switchBlock);
 
             // Add case to switch
-            numCase = cast<ConstantInt>(ConstantInt::get(switchI->getCondition()->getType(),switchI->getNumCases()));
-            switchI->addCase(numCase, BB);
+            numCase = cast<ConstantInt>(ConstantInt::get(
+                    switchInst->getCondition()->getType(),
+                     switchInst->getNumCases()));
+            switchInst->addCase(numCase, BB);
         }
+
+        // Remove branch jump from 1st BB and make a jump to the while
+//        F.begin()->getTerminator()->eraseFromParent();
+//        BranchInst::Create(loopStart, &*F.begin());
+
 
         // Recalculate switchVar
-        for (BasicBlock *BB : blocks) {
-            ConstantInt *numCase;
-
-            // Ret BB
-            if (BB->getTerminator()->getNumSuccessors() == 0)
-                continue;
-
-            // If it's a non-conditional jump
-            if (BB->getTerminator()->getNumSuccessors() == 1) {
-                // Get successor and delete terminator
-                BasicBlock *succ = BB->getTerminator()->getSuccessor(0);
-                BB->getTerminator()->eraseFromParent();
-
-                // Get next case
-                numCase = switchI->findCaseDest(succ);
-
-                // If next case == default case (switchDefault)
-                if (numCase == nullptr)
-                    numCase = cast<ConstantInt>(ConstantInt::get(switchI->getCondition()->getType(), switchI->getNumCases() - 1));
-
-                // Update switchVar and jump to the end of loop
-                new StoreInst(numCase, switchVar->getPointerOperand(), BB);
-                BranchInst::Create(loopEnd, BB);
-                continue;
-            }
-
-            // If it's a conditional jump
-            if (BB->getTerminator()->getNumSuccessors() == 2) {
-                // Get next cases
-                ConstantInt *numCaseTrue =
-                        switchI->findCaseDest(BB->getTerminator()->getSuccessor(0));
-                ConstantInt *numCaseFalse =
-                        switchI->findCaseDest(BB->getTerminator()->getSuccessor(1));
-
-                // Check if next case == default case (switchDefault)
-                if (numCaseTrue == nullptr) {
-                    numCaseTrue = cast<ConstantInt>(
-                            ConstantInt::get(switchI->getCondition()->getType(), switchI->getNumCases() - 1));
-                }
-
-                if (numCaseFalse == nullptr) {
-                    numCaseFalse = cast<ConstantInt>(
-                            ConstantInt::get(switchI->getCondition()->getType(), switchI->getNumCases() - 1));
-                }
-
-                // Create a SelectInst
-                auto *branch = cast<BranchInst>(BB->getTerminator());
-                auto *sel = SelectInst::Create(
-                        branch->getCondition(),
-                        numCaseTrue,
-                        numCaseFalse,
-                        "",
-                        BB->getTerminator());
-
-                // Erase terminator
-                BB->getTerminator()->eraseFromParent();
-
-                // Update switchVar and jump to the end of loop
-                new StoreInst(sel, switchVar->getPointerOperand(), BB);
-                BranchInst::Create(loopEnd, BB);
-                continue;
-            }
-        }
+//        for (BasicBlock *BB : blocks) {
+//            ConstantInt *numCase;
+//
+//            // Ret BB
+//            if (BB->getTerminator()->getNumSuccessors() == 0)
+//                continue;
+//
+//            // If it's a non-conditional jump
+//            if (BB->getTerminator()->getNumSuccessors() == 1) {
+//                // Get successor and delete terminator
+//                BasicBlock *succ = BB->getTerminator()->getSuccessor(0);
+//                BB->getTerminator()->eraseFromParent();
+//
+//                // Get next case
+//                numCase = switchInst->findCaseDest(succ);
+//
+//                // If next case == default case (switchDefault)
+//                if (numCase == nullptr)
+//                    numCase = cast<ConstantInt>(ConstantInt::get(switchInst->getCondition()->getType(), switchInst->getNumCases() - 1));
+//
+//                // Update switchVar and jump to the end of loop
+//                new StoreInst(numCase, switchVar->getPointerOperand(), BB);
+//                BranchInst::Create(loopEnd, BB);
+//                continue;
+//            }
+//
+//            // If it's a conditional jump
+//            if (BB->getTerminator()->getNumSuccessors() == 2) {
+//                // Get next cases
+//                ConstantInt *numCaseTrue =
+//                        switchInst->findCaseDest(BB->getTerminator()->getSuccessor(0));
+//                ConstantInt *numCaseFalse =
+//                        switchInst->findCaseDest(BB->getTerminator()->getSuccessor(1));
+//
+//                // Check if next case == default case (switchDefault)
+//                if (numCaseTrue == nullptr) {
+//                    numCaseTrue = cast<ConstantInt>(
+//                            ConstantInt::get(switchInst->getCondition()->getType(), switchInst->getNumCases() - 1));
+//                }
+//
+//                if (numCaseFalse == nullptr) {
+//                    numCaseFalse = cast<ConstantInt>(
+//                            ConstantInt::get(switchInst->getCondition()->getType(), switchInst->getNumCases() - 1));
+//                }
+//
+//                // Create a SelectInst
+//                auto *branch = cast<BranchInst>(BB->getTerminator());
+//                auto *sel = SelectInst::Create(
+//                        branch->getCondition(),
+//                        numCaseTrue,
+//                        numCaseFalse,
+//                        "",
+//                        BB->getTerminator());
+//
+//                // Erase terminator
+//                BB->getTerminator()->eraseFromParent();
+//
+//                // Update switchVar and jump to the end of loop
+//                new StoreInst(sel, switchVar->getPointerOperand(), BB);
+//                BranchInst::Create(loopEnd, BB);
+//                continue;
+//            }
+//        }
 
         return PA;
     }
