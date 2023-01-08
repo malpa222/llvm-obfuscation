@@ -9,14 +9,6 @@
 using namespace llvm;
 
 // FlatteningPass
-/*
- * 1. Count basic blocks -> N
- * 2. Create dispatcher variable = 0
- * 3. Create while loop (dispatcher < N)
- * 4. Create switch condition on dispatcher
- * 5. Put each basic block into a switch case
- * 6. Increment dispatcher in default (this will break the loop)
- */
 namespace flattening {
     PreservedAnalyses FlatteningPass::run(llvm::Function &F, llvm::FunctionAnalysisManager &FAM) {
         PreservedAnalyses PA = PreservedAnalyses::none();
@@ -26,17 +18,22 @@ namespace flattening {
         if (F.empty())
             return PA;
 
-        // Save all original BBs
+        // Save all original BB
         for (BasicBlock &BB : F)
             blocks.push_back(&BB);
 
+        // Set up the structure for flattening
         BasicBlock *first = &*F.begin(); // Get a pointer to the first BB
-
-        // Create return BB
+        BasicBlock *loopStart = BasicBlock::Create(F.getContext(), "loopStart", &F, first);
+        BasicBlock *loopEnd = BasicBlock::Create(F.getContext(), "loopEnd", &F, first);
+        BasicBlock *swDefault = BasicBlock::Create(F.getContext(), "switchDefault", &F, loopEnd);
+        BasicBlock *switchBlock = BasicBlock::Create(F.getContext(), "switch", &F);
         BasicBlock *last = BasicBlock::Create(F.getContext(), "return", &F);
-        ReturnInst::Create(F.getContext(), ConstantInt::get(Type::getInt32Ty(F.getContext()), 0), last);
 
-        blocks.erase(blocks.begin()); // Remove first BB
+        auto bbIterator = first->begin();
+        BasicBlock *case0 = first->splitBasicBlock(bbIterator, "case0");
+
+        blocks.erase(blocks.begin()); // remove first bb
         first->getTerminator()->eraseFromParent(); // remove jump
 
         // Create dispatcher variable
@@ -48,8 +45,6 @@ namespace flattening {
          * %isBigger = icmp ult ptr %dispatcher, %numBlocks
          * br i1 %isBigger, label %loopStart, label %return
          */
-        BasicBlock *loopStart = BasicBlock::Create(F.getContext(), "loopStart", &F, first);
-        BasicBlock *loopEnd = BasicBlock::Create(F.getContext(), "loopEnd", &F, first);
         auto *numBlocks = new AllocaInst(Type::getInt32Ty(F.getContext()), 0, "numBlocks", first);
         new StoreInst(ConstantInt::get(Type::getInt32Ty(F.getContext()), blocks.size()), numBlocks, first);
         auto icmp = new ICmpInst(
@@ -72,7 +67,6 @@ namespace flattening {
          * store i32 %dispatcherIncremented, ptr %dispatcher, align 4
          * br label %loopEnd
          */
-        BasicBlock *swDefault = BasicBlock::Create(F.getContext(), "switchDefault", &F, loopEnd);
         auto tmp = new LoadInst(
                 Type::getInt32Ty(F.getContext()),
                 dispatcher,
@@ -88,7 +82,6 @@ namespace flattening {
         BranchInst::Create(loopEnd, swDefault); // go to loopEnd
 
         // Create switch instruction itself and set condition
-        BasicBlock *switchBlock = BasicBlock::Create(F.getContext(), "switch", &F);
         switchBlock->moveAfter(loopStart);
         BranchInst::Create(switchBlock, loopStart);
         auto *switchVar = new LoadInst(
@@ -99,20 +92,22 @@ namespace flattening {
         SwitchInst *switchInst = SwitchInst::Create(&*F.begin(), swDefault, blocks.size(), switchBlock);
         switchInst->setCondition(switchVar);
 
-        // Create new basic block for each switch case
-        for (BasicBlock *BB : blocks) {
+        // Create cases
+        for (BasicBlock *block : blocks) {
             ConstantInt *numCase;
-
-            // Move the BB inside the switch (only visual, no code logic)
-            BasicBlock caseBlock = BasicBlock::Create();
-            BB->moveBefore(switchBlock);
 
             // Add case to switch
             numCase = cast<ConstantInt>(ConstantInt::get(
                     switchInst->getCondition()->getType(),
-                     switchInst->getNumCases()));
-            switchInst->addCase(numCase, BB);
+                    switchInst->getNumCases()));
+            switchInst->addCase(numCase, block);
+
+            block->moveAfter(switchBlock);
         }
+        case0->moveAfter(switchBlock);
+
+        // Add return statement to the last block
+        ReturnInst::Create(F.getContext(), ConstantInt::get(Type::getInt32Ty(F.getContext()), 0), last);
 
         // Remove branch jump from 1st BB and make a jump to the while
 //        F.begin()->getTerminator()->eraseFromParent();
