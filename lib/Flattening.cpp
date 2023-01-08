@@ -20,7 +20,7 @@ using namespace llvm;
 namespace flattening {
     PreservedAnalyses FlatteningPass::run(llvm::Function &F, llvm::FunctionAnalysisManager &FAM) {
         PreservedAnalyses PA = PreservedAnalyses::none();
-        std::vector<BasicBlock *> orgBB;
+        std::vector<BasicBlock *> blocks;
 
         // Nothing to flatten
         if (F.empty())
@@ -28,46 +28,56 @@ namespace flattening {
 
         // Save all original BBs
         for (BasicBlock &BB : F)
-            orgBB.push_back(&BB);
+            blocks.push_back(&BB);
 
-        // Remove first BB
-        orgBB.erase(orgBB.begin()); // Remove first BB
         BasicBlock *first = &*F.begin(); // Get a pointer to the first BB
 
-        // Remove jump
-        first->getTerminator()->eraseFromParent();
+        BasicBlock *last = BasicBlock::Create(F.getContext(),"return",&F);
+        ReturnInst::Create(F.getContext(), ConstantInt::get(Type::getInt32Ty(F.getContext()), 0), last);
 
-        // Create switch variable and set as it
+        blocks.erase(blocks.begin()); // Remove first BB
+        first->getTerminator()->eraseFromParent(); // remove jump
+
+        // Create switch variable
         auto *dispatcher = new AllocaInst(Type::getInt32Ty(F.getContext()), 0, "dispatcher", first);
         new StoreInst(ConstantInt::get(Type::getInt32Ty(F.getContext()), 0), dispatcher, first);
 
-        // Create main loop
-        BasicBlock *loopEntry = BasicBlock::Create(F.getContext(), "loopEntry", &F, first);
+        /*
+         * Create while loop that ends with:
+         * %isBigger = icmp ult ptr %dispatcher, %numBlocks
+         * br i1 %isBigger, label %loopStart, label %return
+         */
+        BasicBlock *loopStart = BasicBlock::Create(F.getContext(), "loopStart", &F, first);
         BasicBlock *loopEnd = BasicBlock::Create(F.getContext(), "loopEnd", &F, first);
+        auto *numBlocks = new AllocaInst(Type::getInt32Ty(F.getContext()), 0, "numBlocks", first);
+        new StoreInst(ConstantInt::get(Type::getInt32Ty(F.getContext()), blocks.size() + 1), numBlocks, first);
+        auto icmp = new ICmpInst(
+                *loopEnd,
+                CmpInst::Predicate::ICMP_ULT,
+                dispatcher,
+                numBlocks,
+                "isBigger");
+        BranchInst::Create(loopStart, last, icmp, loopEnd);
 
         // load dispatcher to switchVar ??????
         auto *switchVar = new LoadInst(
                 Type::getInt32Ty(F.getContext()),
                 dispatcher,
                 "switchVar",
-                loopEntry);
+                loopStart);
 
         // Move first BB on top
-        first->moveBefore(loopEntry);
-        BranchInst::Create(loopEntry, first);
-
-        // loopEnd jump to loopEntry
-        BranchInst::Create(loopEntry, loopEnd);
+        first->moveBefore(loopStart);
+        BranchInst::Create(loopStart, first);
 
         /*
-         * Create default switch case
+         * Create default switch case condition
          *
          * %dispatcher = load i32, ptr %dispatcher, align 4
          * %dispatcherIncremented = add nsw i32 %dispatcher, 1
          * store i32 %dispatcherIncremented, ptr %dispatcher, align 4
-         * br label %loopEntry
+         * br label %loopEnd
          */
-
         BasicBlock *swDefault = BasicBlock::Create(F.getContext(), "switchDefault", &F, loopEnd);
         auto tmp = new LoadInst(
                 Type::getInt32Ty(F.getContext()),
@@ -81,20 +91,18 @@ namespace flattening {
                 "tmpIncremented",
                 swDefault);
         new StoreInst(tmpIncremented, dispatcher, swDefault);
-
-
-        BranchInst::Create(loopEnd, swDefault);
+        BranchInst::Create(loopEnd, swDefault); // go to loopEnd
 
         // Create switch instruction itself and set condition
-        SwitchInst *switchI = SwitchInst::Create(&*F.begin(), swDefault, orgBB.size(), loopEntry);
+        SwitchInst *switchI = SwitchInst::Create(&*F.begin(), swDefault, blocks.size(), loopStart);
         switchI->setCondition(switchVar);
 
         // Remove branch jump from 1st BB and make a jump to the while
         F.begin()->getTerminator()->eraseFromParent();
 
-        BranchInst::Create(loopEntry, &*F.begin());
+        BranchInst::Create(loopStart, &*F.begin());
 
-        for (BasicBlock *BB : orgBB) {
+        for (BasicBlock *BB : blocks) {
             ConstantInt *numCase;
 
             // Move the BB inside the switch (only visual, no code logic)
@@ -106,7 +114,7 @@ namespace flattening {
         }
 
         // Recalculate switchVar
-        for (BasicBlock *BB : orgBB) {
+        for (BasicBlock *BB : blocks) {
             ConstantInt *numCase;
 
             // Ret BB
