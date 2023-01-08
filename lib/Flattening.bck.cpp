@@ -37,7 +37,7 @@ namespace flattening {
         // Remove jump
         first->getTerminator()->eraseFromParent();
 
-        // Create switch variable and set as it
+        // Create dispatcher variable
         auto *dispatcher = new AllocaInst(Type::getInt32Ty(F.getContext()), 0, "dispatcher", first);
         new StoreInst(ConstantInt::get(Type::getInt32Ty(F.getContext()), 0), dispatcher, first);
 
@@ -45,7 +45,7 @@ namespace flattening {
         BasicBlock *loopEntry = BasicBlock::Create(F.getContext(), "loopEntry", &F, first);
         BasicBlock *loopEnd = BasicBlock::Create(F.getContext(), "loopEnd", &F, first);
 
-        // load dispatcher to switchVar ??????
+        // load dispatcher to switchVar
         auto *switchVar = new LoadInst(
                 Type::getInt32Ty(F.getContext()),
                 dispatcher,
@@ -59,34 +59,12 @@ namespace flattening {
         // loopEnd jump to loopEntry
         BranchInst::Create(loopEntry, loopEnd);
 
-        /*
-         * Create default switch case
-         *
-         * %dispatcher = load i32, ptr %dispatcher, align 4
-         * %dispatcherIncremented = add nsw i32 %dispatcher, 1
-         * store i32 %dispatcherIncremented, ptr %dispatcher, align 4
-         * br label %loopEntry
-         */
-
-        BasicBlock *swDefault = BasicBlock::Create(F.getContext(), "switchDefault", &F, loopEnd);
-        auto tmp = new LoadInst(
-                Type::getInt32Ty(F.getContext()),
-                dispatcher,
-                "tmp",
-                swDefault);
-        auto tmpIncremented = BinaryOperator::Create(
-                Instruction::Add,
-                tmp,
-                ConstantInt::get(Type::getInt32Ty(F.getContext()), 1),
-                "tmpIncremented",
-                swDefault);
-        new StoreInst(tmpIncremented, dispatcher, swDefault);
-
-
+        BasicBlock *swDefault =
+                BasicBlock::Create(F.getContext(), "switchDefault", &F, loopEnd);
         BranchInst::Create(loopEnd, swDefault);
 
         // Create switch instruction itself and set condition
-        SwitchInst *switchI = SwitchInst::Create(&*F.begin(), swDefault, orgBB.size(), loopEntry);
+        SwitchInst *switchI = SwitchInst::Create(&*F.begin(), swDefault, 0, loopEntry);
         switchI->setCondition(switchVar);
 
         // Remove branch jump from 1st BB and make a jump to the while
