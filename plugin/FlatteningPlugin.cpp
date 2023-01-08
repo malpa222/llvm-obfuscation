@@ -11,12 +11,6 @@ extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
             "Control flow flattening",
             LLVM_VERSION_STRING,
             [](PassBuilder &PB) {
-                // plugin the analysis pass
-                PB.registerAnalysisRegistrationCallback([](FunctionAnalysisManager &FAM) {
-                    FAM.registerPass([] {
-                        return flattening::FlatteningAnalysis(); });
-                });
-
                 // plugin transformation pass
                 PB.registerPipelineParsingCallback(
                         [](StringRef Name, FunctionPassManager &FPM, ArrayRef<PassBuilder::PipelineElement>) {
