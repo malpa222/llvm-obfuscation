@@ -10,6 +10,8 @@ int main() {
 
     if (n < 10)
         printf("n is smaller than 10\n");
+    else if (n == 10)
+        printf("n is equal to 10\n");
     else
         printf("n is bigger than 10\n");
 

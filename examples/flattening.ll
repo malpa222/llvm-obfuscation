@@ -5,7 +5,8 @@ target triple = "x86_64-redhat-linux-gnu"
 
 @.str = private unnamed_addr constant [8 x i8] c"n = %d\0A\00", align 1
 @.str.1 = private unnamed_addr constant [22 x i8] c"n is smaller than 10\0A\00", align 1
-@.str.2 = private unnamed_addr constant [21 x i8] c"n is bigger than 10\0A\00", align 1
+@.str.2 = private unnamed_addr constant [18 x i8] c"n is equal to 10\0A\00", align 1
+@.str.3 = private unnamed_addr constant [21 x i8] c"n is bigger than 10\0A\00", align 1
 
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @main() #0 {
@@ -25,13 +26,25 @@ define dso_local i32 @main() #0 {
 
 10:                                               ; preds = %0
   %11 = call i32 (ptr, ...) @printf(ptr noundef @.str.1)
-  br label %14
+  br label %20
 
 12:                                               ; preds = %0
-  %13 = call i32 (ptr, ...) @printf(ptr noundef @.str.2)
-  br label %14
+  %13 = load i32, ptr %3, align 4
+  %14 = icmp eq i32 %13, 10
+  br i1 %14, label %15, label %17
 
-14:                                               ; preds = %12, %10
+15:                                               ; preds = %12
+  %16 = call i32 (ptr, ...) @printf(ptr noundef @.str.2)
+  br label %19
+
+17:                                               ; preds = %12
+  %18 = call i32 (ptr, ...) @printf(ptr noundef @.str.3)
+  br label %19
+
+19:                                               ; preds = %17, %15
+  br label %20
+
+20:                                               ; preds = %19, %10
   ret i32 0
 }
 
@@ -56,4 +69,4 @@ attributes #3 = { nounwind }
 !0 = !{i32 1, !"wchar_size", i32 4}
 !1 = !{i32 7, !"uwtable", i32 2}
 !2 = !{i32 7, !"frame-pointer", i32 2}
-!3 = !{!"clang version 15.0.6 (Fedora 15.0.6-1.fc37)"}
+!3 = !{!"clang version 15.0.6 (Fedora 15.0.6-2.fc37)"}
